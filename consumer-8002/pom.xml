@@ -9,7 +9,7 @@
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
-    <artifactId>provider-8001</artifactId>
+    <artifactId>consumer-8002</artifactId>
 
     <dependencies>
         <dependency>
@@ -27,5 +27,4 @@
             <artifactId>hutool-all</artifactId>
         </dependency>
     </dependencies>
-
 </project>
