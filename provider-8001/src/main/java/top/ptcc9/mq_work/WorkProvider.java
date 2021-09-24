@@ -5,6 +5,7 @@ import cn.hutool.log.LogFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 
 import javax.annotation.Resource;
+import java.util.Arrays;
 import java.util.Random;
 
 /**
@@ -33,6 +34,19 @@ public class WorkProvider {
             builder.append(".");
         }
         message = String.valueOf(builder);
+        rabbitTemplate.convertAndSend("work",message);
+        log.info("provider-8001 just sent a message({}) to queue({})",message,"work");
+    }
+
+    /**
+     * 发送一个复杂的任务，将耗时100秒
+     */
+    public void sendComplexTask() {
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < 100; i++) {
+            builder.append(".");
+        }
+        String message = String.valueOf(builder);
         rabbitTemplate.convertAndSend("work",message);
         log.info("provider-8001 just sent a message({}) to queue({})",message,"work");
     }

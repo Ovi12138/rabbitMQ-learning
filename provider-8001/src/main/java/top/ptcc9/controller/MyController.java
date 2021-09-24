@@ -1,5 +1,6 @@
 package top.ptcc9.controller;
 
+import cn.hutool.core.date.StopWatch;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
@@ -34,7 +35,12 @@ public class MyController {
         //连续发送 5 条消息，因为消息会被多消费者消费
         for (int i = 0; i < 5; i++) {
             //调用 workProvider 发送消息
-            workProvider.send(message);
+            workProvider.send(message + (i + 1));
         }
+    }
+
+    @RequestMapping(value = "/sendComplexTaskToWork",method = RequestMethod.POST)
+    public void sendComplexTaskToWork() {
+        workProvider.sendComplexTask();
     }
 }

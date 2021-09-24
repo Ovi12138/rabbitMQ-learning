@@ -16,13 +16,13 @@ import top.ptcc9.mq_work.WorkConsumer2;
 public class BeanConfig {
 
     @Bean
-    public Queue getWorkQueue() {
-        return new Queue("work");
+    public Queue getHelloQueue() {
+        return new Queue("hello",true);
     }
 
     @Bean
-    public Queue getHelloQueue() {
-        return new Queue("hello");
+    public Queue getWorkQueue() {
+        return new Queue("work",true);
     }
 
     @Bean

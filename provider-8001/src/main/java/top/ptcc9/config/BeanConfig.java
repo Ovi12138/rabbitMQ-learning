@@ -14,6 +14,17 @@ import top.ptcc9.mq_work.WorkProvider;
 public class BeanConfig {
 
     @Bean
+    public Queue getHelloQueue() {
+        return new Queue("hello",true);
+    }
+
+    @Bean
+    public Queue getWorkQueue() {
+        return new Queue("work",true);
+    }
+
+
+    @Bean
     public Provider getHelloProvider() {
         return new Provider();
     }
