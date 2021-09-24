@@ -43,4 +43,10 @@ public class MyController {
     public void sendComplexTaskToWork() {
         workProvider.sendComplexTask();
     }
+
+
+    @RequestMapping(value = "/sendBeforeProcess",method = RequestMethod.POST)
+    public void sendBeforeProcess(String message) {
+        workProvider.sendBeforeProcess(message);
+    }
 }
