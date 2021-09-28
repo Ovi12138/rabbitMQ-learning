@@ -2,11 +2,7 @@ package top.ptcc9.mq_work;
 
 import cn.hutool.log.Log;
 import cn.hutool.log.LogFactory;
-import org.springframework.amqp.AmqpRejectAndDontRequeueException;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import top.ptcc9.mq_hello.Consumer;
-
-import java.util.concurrent.TimeUnit;
 
 /**
  * @Author HE LONG CAN

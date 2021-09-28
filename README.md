@@ -260,13 +260,17 @@ import top.ptcc9.mq_hello.Provider;
  */
 @Configuration
 public class BeanConfig {
+    
+    @Bean
+    public Queue getHelloQueue() {
+        return new Queue("hello",true);
+    }
 
     @Bean
     public Provider getHelloProvider() {
         return new Provider();
     }
 }
-
 ```
 
 
@@ -300,7 +304,6 @@ public class MyController {
         provider.send(message);
     }
 }
-
 ```
 
 
@@ -353,9 +356,11 @@ package top.ptcc9.mq_hello;import cn.hutool.log.Log;import cn.hutool.log.LogFact
 
 在上一节中我们讲到的是一个简单的`1v1`模型，这一节我们将创建一个`Work`队列，用于应对复杂任务的耗时问题。
 
+这个模式不同于上一节，它拥有多个消费者。这几个消费者同时消费队列中的任务，且任务不会被重复消费。
+
 <img src="http://typora.ptcc9.top/image-20210923164124264.png?x-oss-process=style/style" alt="image-20210923164124264" style="zoom:80%;" />
 
-该模式的主要思想是为了避免某些任务太过耗时，在提供者将任务已字符串的形式放入队列中后，消费者则是稍后去完成这个任务。
+该模式的主要思想是为了避免某些任务太过耗时，在提供者将任务以字符串的形式放入队列中后，消费者则是稍后去完成这个任务。
 
 这样的模型被广泛应用于`Web`项目中，因为一个短暂的`HTTP`请求根本不允许我们在后台执行太过耗时的任务。
 
@@ -388,7 +393,7 @@ package top.ptcc9.mq_work;import cn.hutool.log.Log;import cn.hutool.log.LogFacto
 **在`Controller`对外暴露一个接口：**
 
 ```java
-@RequestMapping(value = "/sendToWork",method = RequestMethod.POST)public void sendToWork(String message) {    //连续发送 5 条消息，因为消息会被多消费者消费    for (int i = 0; i < 5; i++) {        //调用 workProvider 发送消息        workProvider.send(message);    }}
+@RequestMapping(value = "/sendToWork",method = RequestMethod.POST)public void sendToWork(String message) {    //连续发送 5 条消息，因为消息会被多消费者消费    for (int i = 0; i < 5; i++) {        //调用 workProvider 发送消息        workProvider.send(message + (i + 1));    }}
 ```
 
 
@@ -409,5 +414,194 @@ package top.ptcc9.mq_work;import cn.hutool.log.Log;import cn.hutool.log.LogFacto
 
 
 
+#### 3. 消息确认机制
 
+你可能在担心有些耗时任务执行的过程中`Consumer`消费者仅仅完成了一半就发生异常。
+
+`Spring AMQP`采用了比较保守的消息确认机制，如果在任务的过程中抛出异常，则会自动调用`channel.basicReject(deliveryTag, requeue);`并且将未完成的任务重新入队。
+
+这样的消息确认机制是默认开启的，除非你显式的关闭它。
+
+```properties
+defaultRequeueRejected=false   #关闭消息确认
+```
+
+**还有一个例外情况**，并不是所有的`Exception`都会触发`Reject`，当你的任务在执行的过程中抛出了`AmqpRejectAndDontRequeueException`，那么你的任务仍然会被确认消费。
+
+
+
+**测试：**
+
+我们先将消息确认关闭。
+
+```java
+    listener:      simple:        default-requeue-rejected: false
+```
+
+重新在`WorkProvider`中编写一个新的方法，用于发送一个巨耗时的任务到消息队列中。
+
+```java
+/** * 发送一个复杂的任务，将耗时100秒 */public void sendComplexTask() {    StringBuilder builder = new StringBuilder();    for (int i = 0; i < 100; i++) {        builder.append(".");    }    String message = String.valueOf(builder);    rabbitTemplate.convertAndSend("work",message);    log.info("provider-8001 just sent a message({}) to queue({})",message,"work");}//MyController.java@RequestMapping(value = "/sendComplexTaskToWork",method = RequestMethod.POST)public void sendComplexTaskToWork() {    workProvider.sendComplexTask();}
+```
+
+再修改`WorkConsumer1`和`WorkConsumer2`的监听方法。
+
+让其休眠一段时间后抛出异常，模拟执行过程中的出错。
+
+```java
+@RabbitListener(queues = "work")public void receive(String message) {    log.info("consumer-1 just received a message({}) from queue({})",message,"work");    /*        休眠5秒后抛出异常         */    try {        TimeUnit.SECONDS.sleep(5);    }catch (InterruptedException e) {        e.printStackTrace();    }    throw new IllegalArgumentException();    //        //检查字符串中"."，每次检查到阻塞一秒    //        for (int i = 0; i < message.length(); i++) {    //            if (message.charAt(i) == '.') {    //                try {    //                    TimeUnit.SECONDS.sleep(1);    //                }catch (InterruptedException e) {    //                    e.printStackTrace();    //                }    //            }    //        }    //        log.info("consumer-1 just finished message({})",message);}
+```
+
+这样就满足了测试要求，我们调用接口让`WorkProvider`发送一个耗时任务到队列中。
+
+`WorkProvider`发送成功。
+
+![image-20210924095958121](http://typora.ptcc9.top/image-20210924095958121.png?x-oss-process=style/style)
+
+`WorkConsumer`接收任务。
+
+![image-20210924095914845](http://typora.ptcc9.top/image-20210924095914845.png?x-oss-process=style/style)
+
+`RabbitMQ`控制台内变化。
+
+![image-20210924100229275](http://typora.ptcc9.top/image-20210924100229275.png?x-oss-process=style/style)
+
+- `Ready`：队列内尚未被取出的任务。
+- `Unacked`：已取出，但是尚未被确认消费的任务。
+- `Total`：合计。
+
+可见，在执行任务过程中发生了异常，但消息还是被消费掉了。这样很可能造成数据丢失。
+
+
+
+**其他测试：**
+
+以上的测试是验证了关闭默认消息确认情况下的消息消费情况。
+
+**除此之外，还需要测试两种情况，这里仅说明，请自行测试：**
+
+- 关闭消息确认，抛出`AmqpRejectAndDontRequeueException`，查看消息状态。
+- 打开消息确认，抛出异常，查看消息状态。
+
+
+
+#### 4. 消息手动确认
+
+`RabbitMQ`默认使用自动确认，但很多时候并不满足我们的需求。注解`@RabbitListener`中可以修改消息确认模式。
+
+```java
+/**	 * Override the container factory	 * {@link org.springframework.amqp.core.AcknowledgeMode} property. Must be one of the	 * valid enumerations. If a SpEL expression is provided, it must evaluate to a	 * {@link String} or {@link org.springframework.amqp.core.AcknowledgeMode}.	 * @return the acknowledgement mode.	 * @since 2.2	 */String ackMode() default "";
+```
+
+通过传入一个`String`类型的`AcknowledgeMode`枚举来切换确认模式。共有下列三种模式，手动模式为`MANUAL`。
+
+```java
+/**	 * No acks - {@code autoAck=true} in {@code Channel.basicConsume()}.	 */NONE,/**	 * Manual acks - user must ack/nack via a channel aware listener.	 */MANUAL,/**	 * Auto - the container will issue the ack/nack based on whether	 * the listener returns normally, or throws an exception.	 * <p><em>Do not confuse with RabbitMQ {@code autoAck} which is	 * represented by {@link #NONE} here</em>.	 */AUTO;
+```
+
+所以，我们可以通过下面的方式修改消费者的消息确认模式。
+
+```java
+@RabbitListener(queues = "***",ackMode = "MANUAL")
+```
+
+接下来，我们可以在程序中灵活的使用`channel.basicAck()`确认消息，和`channel.basicNack()`拒绝消息。
+
+- `chanel.basicAck(long,boolean)`
+
+确认消息，第一个参数为`deliveryTag`，表示当前消息的投递序号，每次投递消息，该参数都会增加。第二个参数`multiple`表示是否支持多消息同时确认。
+
+- `channel.basicNack(long,boolean,boolean)`
+
+拒绝消息，前两个参数与`basicAck`相同，第三个参数表示是否重新入队。
+
+
+
+**测试：**
+
+编写一个`ManualAckConsumer.java`，确认所有含有**奇数**的消息，拒绝所有**非奇数**的消息。
+
+```java
+public class ManualAckConsumer {    private static final Log log = LogFactory.get(ManualAckConsumer.class);    private static final Pattern compile = Pattern.compile("[1,3,5,7,9]");    @RabbitListener(queues = "manual_ack",ackMode = "MANUAL")    public void receive(Message source, Channel channel) throws IOException {        String message = new String(source.getBody());        long deliveryTag = source.getMessageProperties().getDeliveryTag();        log.info("manual ack consumer just received a message({}) from queue({})",message,"manual_ack");        Matcher matcher = compile.matcher(message);        if (matcher.find()) {            channel.basicAck(deliveryTag, false);            log.info("manual ack consumer just [ACK] message({})",message);        } else {            channel.basicNack(deliveryTag,false,true);            log.warn("manual ack consumer just [NACK] message({})",message);        }    }}
+```
+
+编写一个`DefaultProvider`用于向指定队列发送指定消息。
+
+```java
+public class DefaultProvider {    private static final Log log = LogFactory.get(DefaultProvider.class);    @Resource    private RabbitTemplate rabbitTemplate;    public void send(String message,String queueName) {        rabbitTemplate.convertAndSend(queueName,message);        log.info("default provider just sent a message({}) to queue({})",message,queueName);    }}//MyController.java@RequestMapping(value = "/sendToManualAckQueue",method = RequestMethod.POST)public void sendToManualAckQueue() {    for (int i = 1; i <= 9; i++) {        defaultProvider.send(String.valueOf(i),"manual_ack");    }}
+```
+
+调用接口发送`[1,9]`消息，查看消费情况：
+
+**`default provider`正常发送了`[1,9]`消息。**
+
+![image-20210928171500619](http://typora.ptcc9.top/image-20210928171500619.png?x-oss-process=style/style)
+
+`ManualAckConsumer`正常消费且`ACK`了五条消息，分别为`1,3,5,7,9`。**但是消息`2,4,6,8`被`NACK`且重新入队，重新入队后重新消费，之后再`NACK`再重新入队，陷入了死循环。**
+
+<img src="http://typora.ptcc9.top/image-20210928171740742.png?x-oss-process=style/style" alt="image-20210928171740742" style="zoom:80%;" />
+
+此时`RabbitMQ`控制台也表现出相同的信息。
+
+![image-20210928171812308](http://typora.ptcc9.top/image-20210928171812308.png?x-oss-process=style/style)
+
+永远有`4`条消息未被消费。
+
+
+
+#### 5. 死信队列
+
+
+
+
+
+#### 6. 消息前置处理
+
+你可以选择使用`convertAndSent`方法并且传入一个`MessagePostProcessor `接口的实现类作为参数来达到消息前置处理的目的。
+
+该接口类中提供一个在消息发送之前的回调方法，所以这里是一个修改信息或者头的好地方。
+
+**附上源码：**
+
+```java
+package org.springframework.amqp.core;import org.springframework.amqp.AmqpException;@FunctionalInterfacepublic interface MessagePostProcessor {	Message postProcessMessage(Message message) throws AmqpException;	default Message postProcessMessage(Message message, Correlation correlation) {		return postProcessMessage(message);	}}
+```
+
+它是一个函数式接口，由`@FunctionalInterface`可见。
+
+所以可以通过`Lambda`方式调用。
+
+**测试：**
+
+编写一个发送消息的方法。
+
+```java
+/**     * 发送一个请求之前做某件事     */public void sendBeforeProcess(String message) {    //由于是测试消息前置处理，我们这次向hello队列发送消息，因为如果向work队列发送的话，需要修改另外两个监听work队列的消费者，偷个懒。    rabbitTemplate.convertAndSend("hello",message,o -> {        String placeHolder = new String(o.getBody());        //将消息中所有的数字替换成 *        placeHolder = placeHolder.replaceAll("[0-9]", "*");        return new Message(placeHolder.getBytes(),o.getMessageProperties());    });    log.info("provider-8001 just sent a message({}) to queue({})",message,"hello");}//MyController.java  添加@RequestMapping(value = "/sendBeforeProcess",method = RequestMethod.POST)public void sendBeforeProcess(String message) {    workProvider.sendBeforeProcess(message);}
+```
+
+![image-20210924163816981](http://typora.ptcc9.top/image-20210924163816981.png?x-oss-process=style/style)
+
+![image-20210924163834298](http://typora.ptcc9.top/image-20210924163834298.png?x-oss-process=style/style)
+
+可见信息已得到了处理.
+
+
+
+#### 7. 公平调度
+
+`RabbitMQ`在默认情况下使用的就是循环调度，这样的模式通常并不能完全按照我们的意愿来执行。
+
+因为无论任务繁重与否，都将被平分给每个消费者。**这样很可能导致一些消费者任务压得喘不过气，而其他消费者则几乎无事可做。**
+
+`RabbitMQ`之所以这样，是因为他只是盲目的将到来的任务分配给消费者们，而不关心对方是否还有尚未`ACK`的任务。
+
+**例如：**
+
+**`Queue`中有`20`个任务，有两个消费者。那么`RabbitMQ`将默认把第奇数个任务分给`consumer-1`并把第偶数个任务分给`consumer-2`。**
+
+
+
+#### 8. `DEFAULT_PREFETCH_COUNT`
+
+该变量在`AbstractMessageListenerContainer`中定义，表示当前消费者最大能够接受的任务数，也是`RabbitMQ`最大能够给予某消费者未完成的任务数。该变量默认值为`250`，也就是说，当消费者手中有`250`个没有`ACK`的任务时，`RabbitMQ`将不再继续给消费者推送新任务。
 

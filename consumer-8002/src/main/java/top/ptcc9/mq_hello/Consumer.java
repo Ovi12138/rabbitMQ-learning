@@ -12,7 +12,6 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
 public class Consumer {
     private static final Log log = LogFactory.get(Consumer.class);
 
-
     @RabbitListener(queues = "hello")
     public void receive(String message) {
         log.info("consumer-8002 just received a message({}) from queue({})",message,"hello");

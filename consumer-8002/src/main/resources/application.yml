@@ -9,6 +9,3 @@ spring:
     username: root
     password: H03089611.
     virtual-host: test
-    listener:
-      simple:
-        default-requeue-rejected: false
